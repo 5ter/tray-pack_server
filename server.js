@@ -79,6 +79,7 @@ function normalizeInspectionEvent(body, requireEventId = true) {
     const eventId = typeof body.eventId === 'string' ? body.eventId.trim() : '';
     const cleanedPartNumber = typeof body.partNumber === 'string' ? body.partNumber.trim() : '';
     const cleanedMachineId = typeof body.machineId === 'string' ? body.machineId.trim() : '';
+    const cleanedOperatorName = typeof body.operatorName === 'string' ? body.operatorName.trim() : 'UNKNOWN';
     const parsedTimestamp = typeof body.timestampUtc === 'string' ? new Date(body.timestampUtc) : null;
 
     if (requireEventId && !EVENT_ID_PATTERN.test(eventId)) {
@@ -96,6 +97,9 @@ function normalizeInspectionEvent(body, requireEventId = true) {
     if (!cleanedMachineId || cleanedMachineId.length > 64) {
         return { error: 'A valid machineId is required.' };
     }
+    if (!cleanedOperatorName || cleanedOperatorName.length > 100) {
+        return { error: 'A valid operatorName is required and must be 100 characters or fewer.' };
+    }
     if (!validRunId(body.runId)) {
         return { error: 'runId must be a UUID.' };
     }
@@ -110,6 +114,7 @@ function normalizeInspectionEvent(body, requireEventId = true) {
             runId: body.runId,
             status: body.status,
             machineId: cleanedMachineId,
+            operatorName: cleanedOperatorName,
             occurredAtUtc: parsedTimestamp.toISOString().slice(0, 23).replace('T', ' ')
         }
     };
@@ -118,12 +123,12 @@ function normalizeInspectionEvent(body, requireEventId = true) {
 function insertInspectionEvent(event, callback) {
     const insertSql = `
         INSERT INTO inspection_results
-            (event_id, part_number, run_id, status, machine_id, occurred_at_utc)
-        VALUES (COALESCE(?, UUID()), ?, ?, ?, ?, ?)
+            (event_id, part_number, run_id, status, machine_id, operator_name, occurred_at_utc)
+        VALUES (COALESCE(?, UUID()), ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE event_id = VALUES(event_id)`;
     db.query(insertSql, [
         event.eventId, event.partNumber, event.runId, event.status,
-        event.machineId, event.occurredAtUtc
+        event.machineId, event.operatorName, event.occurredAtUtc
     ], callback);
 }
 
@@ -208,7 +213,7 @@ app.post('/inspection-results', (req, res) => {
         if (insertError) {
             return sendInspectionInsertError(res, insertError);
         }
-        logger.log(`Saved ${event.status} result for part=${event.partNumber}, run=${event.runId}, machine=${event.machineId}`);
+        logger.log(`Saved ${event.status} result for part=${event.partNumber}, run=${event.runId}, operator=${event.operatorName}, machine=${event.machineId}`);
         res.status(201).json({ message: 'Inspection result recorded.', recordId: result.insertId });
     });
 });

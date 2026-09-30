@@ -62,6 +62,206 @@ app.post('/login', async (req, res) => {
 // ⭐ NEW ENDPOINT 4: Register New Product
 // Inserts new product data into the label_print_data table.
 // ------------------------------------------------------------------
+// New production API. The existing printing-era endpoints below remain
+// available during migration; this client uses the endpoints in this block.
+const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const EVENT_ID_PATTERN = RUN_ID_PATTERN;
+
+function validRunId(value) {
+    return typeof value === 'string' && RUN_ID_PATTERN.test(value);
+}
+
+function normalizeInspectionEvent(body, requireEventId = true) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return { error: 'Each inspection event must be a JSON object.' };
+    }
+
+    const eventId = typeof body.eventId === 'string' ? body.eventId.trim() : '';
+    const cleanedPartNumber = typeof body.partNumber === 'string' ? body.partNumber.trim() : '';
+    const cleanedMachineId = typeof body.machineId === 'string' ? body.machineId.trim() : '';
+    const parsedTimestamp = typeof body.timestampUtc === 'string' ? new Date(body.timestampUtc) : null;
+
+    if (requireEventId && !EVENT_ID_PATTERN.test(eventId)) {
+        return { error: 'eventId must be a UUID.' };
+    }
+    if (!requireEventId && eventId && !EVENT_ID_PATTERN.test(eventId)) {
+        return { error: 'eventId must be a UUID when provided.' };
+    }
+    if (!cleanedPartNumber || cleanedPartNumber.length > 100) {
+        return { error: 'A valid partNumber is required.' };
+    }
+    if (body.status !== 'OK' && body.status !== 'NG') {
+        return { error: "status must be either 'OK' or 'NG'." };
+    }
+    if (!cleanedMachineId || cleanedMachineId.length > 64) {
+        return { error: 'A valid machineId is required.' };
+    }
+    if (!validRunId(body.runId)) {
+        return { error: 'runId must be a UUID.' };
+    }
+    if (!parsedTimestamp || Number.isNaN(parsedTimestamp.getTime())) {
+        return { error: 'timestampUtc must be a valid ISO timestamp.' };
+    }
+
+    return {
+        event: {
+            eventId: eventId || null,
+            partNumber: cleanedPartNumber,
+            runId: body.runId,
+            status: body.status,
+            machineId: cleanedMachineId,
+            occurredAtUtc: parsedTimestamp.toISOString().slice(0, 23).replace('T', ' ')
+        }
+    };
+}
+
+function insertInspectionEvent(event, callback) {
+    const insertSql = `
+        INSERT INTO inspection_results
+            (event_id, part_number, run_id, status, machine_id, occurred_at_utc)
+        VALUES (COALESCE(?, UUID()), ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE event_id = VALUES(event_id)`;
+    db.query(insertSql, [
+        event.eventId, event.partNumber, event.runId, event.status,
+        event.machineId, event.occurredAtUtc
+    ], callback);
+}
+
+function sendInspectionInsertError(res, error) {
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+        return res.status(404).json({ error: 'Part number is not registered.' });
+    }
+    logger.error('Database error inserting inspection result:', error);
+    return res.status(500).json({ error: 'Database error saving inspection result.' });
+}
+
+function sendRunSummary(runId, partNumber, res) {
+    const sql = `
+        SELECT
+            p.part_number AS partNumber,
+            COALESCE(SUM(r.status = 'OK'), 0) AS okCount,
+            COALESCE(SUM(r.status = 'NG'), 0) AS ngCount,
+            COUNT(r.id) AS totalCount
+        FROM registered_parts p
+        LEFT JOIN inspection_results r
+            ON r.part_number = p.part_number AND r.run_id = ?
+        WHERE p.part_number = ?
+        GROUP BY p.part_number
+        LIMIT 1`;
+
+    db.query(sql, [runId, partNumber], (err, rows) => {
+        if (err) {
+            logger.error('Database error reading current-run counts:', err);
+            return res.status(500).json({ error: 'Database error reading current-run counts.' });
+        }
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Registered part number was not found.' });
+        }
+        const row = rows[0];
+        res.status(200).json({
+            runId,
+            partNumber: row.partNumber,
+            okCount: Number(row.okCount),
+            ngCount: Number(row.ngCount),
+            totalCount: Number(row.totalCount)
+        });
+    });
+}
+
+app.get('/parts', (req, res) => {
+    db.query('SELECT part_number AS partNumber FROM registered_parts ORDER BY part_number', (err, rows) => {
+        if (err) {
+            logger.error('Database error listing registered part numbers:', err);
+            return res.status(500).json({ error: 'Database error listing part numbers.' });
+        }
+        res.status(200).json(rows);
+    });
+});
+
+app.post('/register-part', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const partNumber = typeof body.partNumber === 'string' ? body.partNumber.trim() : '';
+    if (!partNumber || partNumber.length > 100) {
+        return res.status(400).json({ error: 'Part number is required and must be 100 characters or fewer.' });
+    }
+    db.query('INSERT INTO registered_parts (part_number) VALUES (?)', [partNumber], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') {
+                return res.status(409).json({ error: `Part number '${partNumber}' is already registered.` });
+            }
+            logger.error('Database error registering part number:', err);
+            return res.status(500).json({ error: 'Database error registering part number.' });
+        }
+        logger.log(`Registered part number ${partNumber}`);
+        res.status(201).json({ message: 'Part number registered successfully.', partNumber });
+    });
+});
+
+app.post('/inspection-results', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const normalized = normalizeInspectionEvent(body, false);
+    if (normalized.error) {
+        return res.status(400).json({ error: normalized.error });
+    }
+    const event = normalized.event;
+    insertInspectionEvent(event, (insertError, result) => {
+        if (insertError) {
+            return sendInspectionInsertError(res, insertError);
+        }
+        logger.log(`Saved ${event.status} result for part=${event.partNumber}, run=${event.runId}, machine=${event.machineId}`);
+        res.status(201).json({ message: 'Inspection result recorded.', recordId: result.insertId });
+    });
+});
+
+app.post('/inspection-results/batch', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const events = body.events;
+    if (!Array.isArray(events) || events.length < 1 || events.length > 100) {
+        return res.status(400).json({ error: 'events must contain between 1 and 100 inspection results.' });
+    }
+
+    const normalizedEvents = [];
+    for (let index = 0; index < events.length; index += 1) {
+        const normalized = normalizeInspectionEvent(events[index], true);
+        if (normalized.error) {
+            return res.status(400).json({ error: `events[${index}]: ${normalized.error}` });
+        }
+        normalizedEvents.push(normalized.event);
+    }
+
+    // Inserts are idempotent by event_id. If a later insert fails after earlier
+    // ones succeeded, the client retries the complete batch without duplicates.
+    const acceptedEventIds = [];
+    let index = 0;
+    function saveNext() {
+        if (index >= normalizedEvents.length) {
+            return res.status(200).json({ acceptedEventIds });
+        }
+        const event = normalizedEvents[index];
+        insertInspectionEvent(event, insertError => {
+            if (insertError) {
+                return sendInspectionInsertError(res, insertError);
+            }
+            acceptedEventIds.push(event.eventId);
+            index += 1;
+            saveNext();
+        });
+    }
+    saveNext();
+});
+
+app.get('/run-summary', (req, res) => {
+    const { runId } = req.query;
+    const partNumber = typeof req.query.partNumber === 'string' ? req.query.partNumber.trim() : '';
+    if (!validRunId(runId)) {
+        return res.status(400).json({ error: 'runId must be a UUID.' });
+    }
+    if (!partNumber || partNumber.length > 100) {
+        return res.status(400).json({ error: 'A valid partNumber is required.' });
+    }
+    sendRunSummary(runId, partNumber, res);
+});
+
 app.post('/register-product', async (req, res) => {
     const { PN, Quantity, Box_ID, Spec, Remarks, Tray_Amount } = req.body;
 

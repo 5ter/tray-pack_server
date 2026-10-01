@@ -12,20 +12,27 @@ app.use(cors());
 app.use(express.json()); 
 app.use(express.text({ type: 'text/plain' }));
 
-const db = mysql.createConnection({
+const db = mysql.createPool({
     host: 'localhost',
     port: 3306,
     user: 'root',
     password: 'aMicf_bcps2025',
-    database: 'tray'
+    database: 'tray',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000
 });
 
-db.connect(err => {
+// Startup check (doesn't crash if DB is down; pool will retry on next query)
+db.getConnection((err, connection) => {
     if (err) {
         logger.error('Error connecting to the database:', err.stack);
         return;
     }
-    logger.log('Connected to SQL database as ID', db.threadId);
+    logger.log('Connected to SQL database as ID', connection.threadId);
+    connection.release();
 });
 
 // ------------------------------------------------------------------

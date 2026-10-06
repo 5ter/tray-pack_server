@@ -115,6 +115,10 @@ app.post('/login', async (req, res) => {
 // available during migration; this client uses the endpoints in this block.
 // The management dashboard is hosted by this API process. Its HTML is public,
 // but its data APIs require a short-lived bearer token from /admin/api/login.
+app.get('/', (_req, res) => {
+    res.redirect('/admin');
+});
+
 app.get(['/admin', '/admin/'], (_req, res) => {
     res.sendFile(path.join(__dirname, 'admin_dashboard.html'));
 });

@@ -20,7 +20,7 @@
     .subtitle, .muted { color: #667085; }
     .subtitle { margin: 6px 0 0; }
     .actions, .filters { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
-    .panel, .card, .login-card { background: #fff; border: 1px solid #e4e9f1; border-radius: 14px; box-shadow: 0 5px 18px #1831530b; }
+    .panel, .card { background: #fff; border: 1px solid #e4e9f1; border-radius: 14px; box-shadow: 0 5px 18px #1831530b; }
     .filters { padding: 16px; margin-bottom: 18px; }
     .field { display: grid; gap: 6px; min-width: 150px; }
     .field label { font-size: 12px; font-weight: 700; color: #475467; }
@@ -51,40 +51,17 @@
     .bar-ok { background: #12b76a; }
     .bar-ng { background: #f04438; }
     .trend-total { color: #667085; text-align: right; }
-    .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-    .login-card { width: min(100%, 410px); padding: 28px; }
-    .login-card h1 { font-size: 25px; }
-    .login-card label { display: block; margin: 18px 0 6px; font-weight: 650; }
-    .login-card input, .login-card button { width: 100%; }
-    .login-card button { margin-top: 20px; }
     [hidden] { display: none !important; }
     @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 520px) { .page { width: min(100% - 20px, 1440px); padding-top: 18px; } .topbar { align-items: start; } .cards { gap: 9px; } .card { padding: 14px; } .filters { align-items: stretch; } .field { flex: 1 1 140px; } .actions { width: 100%; } .actions button { flex: 1; } }
   </style>
 </head>
 <body>
-  <main id="loginPage" class="login-shell">
-    <form id="loginForm" class="login-card">
-      <h1>Management dashboard</h1>
-      <p class="subtitle">Sign in with an existing management account to view tray inspection history.</p>
-      <label for="username">Username</label>
-      <input id="username" name="username" autocomplete="username" required>
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button id="loginButton" class="primary" type="submit">Sign in</button>
-      <div id="loginStatus" class="status" role="status"></div>
-    </form>
-  </main>
-
-  <main id="dashboardPage" class="page" hidden>
+  <main class="page">
     <header class="topbar">
       <div>
         <h1>Tray packing overview</h1>
         <p class="subtitle">Inspection records and production run history · times shown in Malaysia time</p>
-      </div>
-      <div class="actions">
-        <span id="signedInAs" class="muted"></span>
-        <button id="logoutButton" class="secondary" type="button">Sign out</button>
       </div>
     </header>
 

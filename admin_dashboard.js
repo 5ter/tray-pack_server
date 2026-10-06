@@ -1,10 +1,3 @@
-const TOKEN_KEY = 'trayPackingAdminToken';
-const USER_KEY = 'trayPackingAdminUser';
-const token = () => sessionStorage.getItem(TOKEN_KEY) || '';
-
-const loginPage = document.getElementById('loginPage');
-const dashboardPage = document.getElementById('dashboardPage');
-const loginStatus = document.getElementById('loginStatus');
 const dashboardStatus = document.getElementById('dashboardStatus');
 
 function setStatus(element, message, isError = false) {
@@ -12,9 +5,8 @@ function setStatus(element, message, isError = false) {
   element.classList.toggle('error', isError);
 }
 
-async function requestJson(url, options = {}, includeToken = true) {
+async function requestJson(url, options = {}) {
   const headers = new Headers(options.headers || {});
-  if (includeToken && token()) headers.set('Authorization', `Bearer ${token()}`);
   let response;
   try {
     response = await fetch(url, { ...options, headers });
@@ -47,20 +39,6 @@ function todayInMalaysia() {
 function shiftDate(dateValue, days) {
   const [year, month, day] = dateValue.split('-').map(Number);
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
-}
-
-function showDashboard() {
-  loginPage.hidden = true;
-  dashboardPage.hidden = false;
-  document.getElementById('signedInAs').textContent = `Signed in: ${sessionStorage.getItem(USER_KEY) || 'management'}`;
-}
-
-function showLogin(message = '') {
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(USER_KEY);
-  dashboardPage.hidden = true;
-  loginPage.hidden = false;
-  setStatus(loginStatus, message, Boolean(message));
 }
 
 function setCell(row, value, className = '') {
@@ -122,18 +100,23 @@ function renderDaily(rows) {
     const total = Number(item.totalCount || 0);
     const ok = Number(item.okCount || 0);
     const ng = Number(item.ngCount || 0);
+    const tooltip = `${item.productionDate}: ${number(ok)} OK, ${number(ng)} NG, ${number(total)} total`;
     const line = document.createElement('div');
     line.className = 'trend-row';
+    line.title = tooltip;
     const day = document.createElement('span');
     day.textContent = item.productionDate;
     const track = document.createElement('div');
     track.className = 'bar-track';
-    track.setAttribute('aria-label', `${number(ok)} OK, ${number(ng)} NG`);
+    track.title = tooltip;
+    track.setAttribute('aria-label', tooltip);
     const okBar = document.createElement('span');
     okBar.className = 'bar-ok';
+    okBar.title = tooltip;
     okBar.style.width = `${Math.min(100, (ok / max) * 100)}%`;
     const ngBar = document.createElement('span');
     ngBar.className = 'bar-ng';
+    ngBar.title = tooltip;
     ngBar.style.width = `${Math.min(100, (ng / max) * 100)}%`;
     track.append(okBar, ngBar);
     const count = document.createElement('span');
@@ -224,60 +207,19 @@ async function loadDashboard() {
     renderDashboard(data);
     setStatus(dashboardStatus, `Showing ${from} to ${to}${partNumber ? ` · part ${partNumber}` : ' · all part numbers'}.`);
   } catch (error) {
-    if (error.status === 401) {
-      showLogin('Your dashboard session expired. Please sign in again.');
-      return;
-    }
     setStatus(dashboardStatus, error.message, true);
   } finally {
     buttons.forEach(button => { button.disabled = false; });
   }
 }
 
-document.getElementById('loginForm').addEventListener('submit', async event => {
-  event.preventDefault();
-  const button = document.getElementById('loginButton');
-  button.disabled = true;
-  setStatus(loginStatus, 'Checking credentials…');
-  try {
-    const data = await requestJson('/admin/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: document.getElementById('username').value,
-        password: document.getElementById('password').value
-      })
-    }, false);
-    sessionStorage.setItem(TOKEN_KEY, data.token);
-    sessionStorage.setItem(USER_KEY, data.username);
-    document.getElementById('password').value = '';
-    showDashboard();
-    await loadDashboard();
-  } catch (error) {
-    setStatus(loginStatus, error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-});
-
 document.getElementById('filterForm').addEventListener('submit', event => {
   event.preventDefault();
   loadDashboard();
 });
 document.getElementById('refreshButton').addEventListener('click', loadDashboard);
-document.getElementById('logoutButton').addEventListener('click', async () => {
-  try {
-    if (token()) await requestJson('/admin/api/logout', { method: 'POST' });
-  } catch {
-    // Clear local session even when the server cannot be reached.
-  }
-  showLogin('You have signed out.');
-});
 
 const today = todayInMalaysia();
 document.getElementById('toDate').value = today;
 document.getElementById('fromDate').value = shiftDate(today, -29);
-if (token()) {
-  showDashboard();
-  loadDashboard();
-}
+loadDashboard();

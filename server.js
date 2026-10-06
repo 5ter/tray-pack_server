@@ -1,7 +1,6 @@
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
-const crypto = require('node:crypto');
 const path = require('node:path');
 const { buildMalaysiaDateRange } = require('./admin_dashboard_utils');
 // Assuming the logger path is correctly configured in your environment
@@ -28,9 +27,6 @@ const db = mysql.createPool({
     keepAliveInitialDelay: 10000
 });
 
-const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const adminSessions = new Map();
-
 function queryRows(sql, values = []) {
     return new Promise((resolve, reject) => {
         db.query(sql, values, (error, rows) => {
@@ -38,23 +34,6 @@ function queryRows(sql, values = []) {
             resolve(rows);
         });
     });
-}
-
-function requireAdmin(req, res, next) {
-    res.set('Cache-Control', 'no-store');
-    const authorization = req.get('Authorization') || '';
-    const match = authorization.match(/^Bearer ([a-f0-9]{64})$/i);
-    const token = match ? match[1] : '';
-    const session = adminSessions.get(token);
-
-    if (!session || session.expiresAt <= Date.now()) {
-        if (token) adminSessions.delete(token);
-        return res.status(401).json({ error: 'Admin login required or session expired.' });
-    }
-
-    req.adminToken = token;
-    req.adminUsername = session.username;
-    return next();
 }
 
 function inspectionWhereClause(dateRange, partNumber) {
@@ -113,8 +92,8 @@ app.post('/login', async (req, res) => {
 // ------------------------------------------------------------------
 // New production API. The existing printing-era endpoints below remain
 // available during migration; this client uses the endpoints in this block.
-// The management dashboard is hosted by this API process. Its HTML is public,
-// but its data APIs require a short-lived bearer token from /admin/api/login.
+// The read-only management dashboard is available without a login to anyone
+// who can reach this server. Keep this service restricted to the trusted LAN.
 app.get('/', (_req, res) => {
     res.redirect('/admin');
 });
@@ -125,42 +104,6 @@ app.get(['/admin', '/admin/'], (_req, res) => {
 
 app.get('/admin/dashboard.js', (_req, res) => {
     res.sendFile(path.join(__dirname, 'admin_dashboard.js'));
-});
-
-app.post('/admin/api/login', (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required.' });
-    }
-
-    const sql = 'SELECT 1 FROM user_log_in WHERE username = ? AND password = ? LIMIT 1';
-    db.query(sql, [username, password], (error, rows) => {
-        if (error) {
-            logger.error('Database query error during admin login:', error);
-            return res.status(500).json({ error: 'Could not verify management login.' });
-        }
-        if (rows.length !== 1) {
-            logger.info(`Failed management login attempt for user: ${username}`);
-            return res.status(401).json({ error: 'Invalid username or password.' });
-        }
-
-        const now = Date.now();
-        for (const [existingToken, session] of adminSessions) {
-            if (session.expiresAt <= now) adminSessions.delete(existingToken);
-        }
-        const token = crypto.randomBytes(32).toString('hex');
-        const expiresAt = now + ADMIN_SESSION_TTL_MS;
-        adminSessions.set(token, { username, expiresAt });
-        logger.info(`Management dashboard login for user: ${username}`);
-        return res.status(200).json({ token, username, expiresAt: new Date(expiresAt).toISOString() });
-    });
-});
-
-app.post('/admin/api/logout', requireAdmin, (req, res) => {
-    adminSessions.delete(req.adminToken);
-    res.status(200).json({ message: 'Logged out.' });
 });
 
 const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -475,7 +418,8 @@ app.post('/update-box-id', async (req, res) => {
 });
 
 // Read-only management view of the new tray inspection tables.
-app.get('/admin/api/dashboard', requireAdmin, async (req, res) => {
+app.get('/admin/api/dashboard', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     const from = typeof req.query.from === 'string' ? req.query.from : '';
     const to = typeof req.query.to === 'string' ? req.query.to : '';
     const partNumber = typeof req.query.partNumber === 'string' ? req.query.partNumber.trim() : '';

@@ -4,7 +4,7 @@ The Node server hosts a read-only management dashboard at:
 
 `http://192.168.40.29:3168/admin`
 
-It reads only from `registered_parts` and `inspection_results`. Management users can filter by a Malaysia-local date range (up to 366 days) and part number, and review OK/NG totals and yield, daily counts, totals by machine and part, up to 50 recent runs, and up to 100 recent inspection records. Database timestamps remain UTC; the dashboard converts them to `Asia/Kuala_Lumpur` for date filtering and display. The dashboard does not poll automatically; use Refresh to request updated data.
+It reads only from `registered_parts` and `inspection_results`. Users can filter by a Malaysia-local date range (up to 366 days) and part number, and review OK/NG totals and yield, daily counts, totals by machine and part, up to 50 recent runs, and all matching inspection records. The inspection-results list becomes vertically scrollable when it contains more than 10 rows. Database timestamps remain UTC; the dashboard converts them to `Asia/Kuala_Lumpur` for date filtering and display. The dashboard does not poll automatically; use Refresh to request updated data.
 
 ## Access and network security
 

@@ -484,7 +484,7 @@ app.get('/admin/api/dashboard', async (req, res) => {
                     run_id AS runId,
                     DATE_FORMAT(occurred_at_utc, '%Y-%m-%dT%H:%i:%sZ') AS occurredAtUtc
                 FROM inspection_results ${where}
-                ORDER BY occurred_at_utc DESC, id DESC LIMIT 100`, values),
+                ORDER BY occurred_at_utc DESC, id DESC`, values),
             queryRows('SELECT part_number AS partNumber FROM registered_parts ORDER BY part_number')
         ]);
 

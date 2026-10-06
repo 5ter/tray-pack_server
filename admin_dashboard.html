@@ -37,6 +37,8 @@
     .grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; margin-bottom: 16px; }
     .panel { min-width: 0; padding: 18px; margin-bottom: 16px; }
     .table-wrap { overflow-x: auto; }
+    #recentResultsWrap.scrollable { max-height: 400px; overflow-y: auto; }
+    #recentResultsWrap.scrollable thead th { position: sticky; top: 0; z-index: 1; background: #fff; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 10px 9px; border-bottom: 1px solid #eef1f5; text-align: left; white-space: nowrap; }
     th { color: #667085; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
@@ -104,8 +106,8 @@
     </section>
 
     <section class="panel">
-      <h2>Recent inspection results <span class="muted">(up to 100)</span></h2>
-      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Result</th><th>Part number</th><th>Machine</th><th>Operator</th><th>Run ID</th></tr></thead><tbody id="resultRows"></tbody></table></div>
+      <h2>Recent inspection results</h2>
+      <div id="recentResultsWrap" class="table-wrap"><table><thead><tr><th>Time</th><th>Result</th><th>Part number</th><th>Machine</th><th>Operator</th><th>Run ID</th></tr></thead><tbody id="resultRows"></tbody></table></div>
     </section>
     <p id="lastUpdated" class="muted"></p>
   </main>

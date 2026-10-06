@@ -169,6 +169,7 @@ function renderDashboard(data) {
     { value: row => row.operatorName },
     { value: row => runIdShort(row.runId), title: row => row.runId }
   ], 'No inspection results in this range.');
+  document.getElementById('recentResultsWrap').classList.toggle('scrollable', data.recentResults.length > 10);
 
   const partFilter = document.getElementById('partFilter');
   const selectedPart = partFilter.value;

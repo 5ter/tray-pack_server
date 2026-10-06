@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tray Packing | Management Dashboard</title>
+  <style>
+    :root { font-family: "Segoe UI", Arial, sans-serif; color: #172033; background: #f3f6fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    button, input, select { font: inherit; }
+    button { border: 0; border-radius: 8px; padding: 10px 16px; font-weight: 650; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .65; }
+    .primary { color: #fff; background: #155eef; }
+    .secondary { color: #344054; background: #e9eef6; }
+    .page { width: min(1440px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 22px; }
+    h1 { margin: 0; font-size: clamp(24px, 4vw, 32px); letter-spacing: -.03em; }
+    h2 { margin: 0 0 16px; font-size: 18px; }
+    .subtitle, .muted { color: #667085; }
+    .subtitle { margin: 6px 0 0; }
+    .actions, .filters { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+    .panel, .card, .login-card { background: #fff; border: 1px solid #e4e9f1; border-radius: 14px; box-shadow: 0 5px 18px #1831530b; }
+    .filters { padding: 16px; margin-bottom: 18px; }
+    .field { display: grid; gap: 6px; min-width: 150px; }
+    .field label { font-size: 12px; font-weight: 700; color: #475467; }
+    input, select { min-height: 40px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; color: #172033; background: #fff; }
+    #partFilter { min-width: 210px; }
+    .status { min-height: 24px; margin: 8px 0 14px; color: #475467; }
+    .status.error { color: #b42318; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .card { padding: 18px; }
+    .card-label { color: #667085; font-size: 13px; font-weight: 650; }
+    .card-value { margin-top: 8px; font-size: clamp(24px, 4vw, 34px); font-weight: 750; letter-spacing: -.03em; }
+    .card.ok .card-value { color: #067647; }
+    .card.ng .card-value { color: #b42318; }
+    .grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .panel { min-width: 0; padding: 18px; margin-bottom: 16px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 9px; border-bottom: 1px solid #eef1f5; text-align: left; white-space: nowrap; }
+    th { color: #667085; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .empty { color: #667085; text-align: center; padding: 22px 10px; }
+    .badge { display: inline-block; min-width: 38px; padding: 4px 8px; border-radius: 20px; font-size: 11px; font-weight: 750; text-align: center; }
+    .badge.ok { color: #05603a; background: #dcfae6; }
+    .badge.ng { color: #912018; background: #fee4e2; }
+    .trend-list { display: grid; gap: 8px; max-height: 310px; overflow: auto; }
+    .trend-row { display: grid; grid-template-columns: 88px minmax(70px, 1fr) 70px; align-items: center; gap: 10px; font-size: 12px; }
+    .bar-track { display: flex; height: 13px; overflow: hidden; background: #f2f4f7; border-radius: 10px; }
+    .bar-ok { background: #12b76a; }
+    .bar-ng { background: #f04438; }
+    .trend-total { color: #667085; text-align: right; }
+    .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    .login-card { width: min(100%, 410px); padding: 28px; }
+    .login-card h1 { font-size: 25px; }
+    .login-card label { display: block; margin: 18px 0 6px; font-weight: 650; }
+    .login-card input, .login-card button { width: 100%; }
+    .login-card button { margin-top: 20px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 520px) { .page { width: min(100% - 20px, 1440px); padding-top: 18px; } .topbar { align-items: start; } .cards { gap: 9px; } .card { padding: 14px; } .filters { align-items: stretch; } .field { flex: 1 1 140px; } .actions { width: 100%; } .actions button { flex: 1; } }
+  </style>
+</head>
+<body>
+  <main id="loginPage" class="login-shell">
+    <form id="loginForm" class="login-card">
+      <h1>Management dashboard</h1>
+      <p class="subtitle">Sign in with an existing management account to view tray inspection history.</p>
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button id="loginButton" class="primary" type="submit">Sign in</button>
+      <div id="loginStatus" class="status" role="status"></div>
+    </form>
+  </main>
+
+  <main id="dashboardPage" class="page" hidden>
+    <header class="topbar">
+      <div>
+        <h1>Tray packing overview</h1>
+        <p class="subtitle">Inspection records and production run history · times shown in Malaysia time</p>
+      </div>
+      <div class="actions">
+        <span id="signedInAs" class="muted"></span>
+        <button id="logoutButton" class="secondary" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <form id="filterForm" class="panel filters">
+      <div class="field"><label for="fromDate">From (Malaysia date)</label><input id="fromDate" type="date" required></div>
+      <div class="field"><label for="toDate">To (Malaysia date)</label><input id="toDate" type="date" required></div>
+      <div class="field"><label for="partFilter">Part number</label><select id="partFilter"><option value="">All part numbers</option></select></div>
+      <button id="applyButton" class="primary" type="submit">Apply filters</button>
+      <button id="refreshButton" class="secondary" type="button">Refresh</button>
+    </form>
+    <div id="dashboardStatus" class="status" role="status"></div>
+
+    <section class="cards" aria-label="Production totals">
+      <article class="card"><div class="card-label">Inspections</div><div id="totalCount" class="card-value">—</div></article>
+      <article class="card ok"><div class="card-label">OK</div><div id="okCount" class="card-value">—</div></article>
+      <article class="card ng"><div class="card-label">NG</div><div id="ngCount" class="card-value">—</div></article>
+      <article class="card"><div class="card-label">OK yield</div><div id="yieldPercent" class="card-value">—</div><div id="runCount" class="muted"></div></article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Daily inspections</h2>
+        <div id="dailyChart" class="trend-list"><div class="empty">Apply filters to load results.</div></div>
+      </article>
+      <article class="panel">
+        <h2>By machine</h2>
+        <div class="table-wrap"><table><thead><tr><th>Machine</th><th>Runs</th><th>OK</th><th>NG</th><th>Total</th></tr></thead><tbody id="machineRows"></tbody></table></div>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>By part number</h2>
+        <div class="table-wrap"><table><thead><tr><th>Part number</th><th>Runs</th><th>OK</th><th>NG</th><th>Total</th></tr></thead><tbody id="partRows"></tbody></table></div>
+      </article>
+      <article class="panel">
+        <h2>Recent production runs</h2>
+        <div class="table-wrap"><table><thead><tr><th>Started</th><th>Part</th><th>Machine</th><th>Operator</th><th>OK</th><th>NG</th></tr></thead><tbody id="runRows"></tbody></table></div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Recent inspection results <span class="muted">(up to 100)</span></h2>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Result</th><th>Part number</th><th>Machine</th><th>Operator</th><th>Run ID</th></tr></thead><tbody id="resultRows"></tbody></table></div>
+    </section>
+    <p id="lastUpdated" class="muted"></p>
+  </main>
+  <script src="/admin/dashboard.js" defer></script>
+</body>
+</html>

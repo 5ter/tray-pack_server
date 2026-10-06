@@ -1,6 +1,9 @@
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
+const crypto = require('node:crypto');
+const path = require('node:path');
+const { buildMalaysiaDateRange } = require('./admin_dashboard_utils');
 // Assuming the logger path is correctly configured in your environment
 const logger = require('C:/Barcode_Printing_Node/utils/logger'); 
 
@@ -24,6 +27,45 @@ const db = mysql.createPool({
     enableKeepAlive: true,
     keepAliveInitialDelay: 10000
 });
+
+const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const adminSessions = new Map();
+
+function queryRows(sql, values = []) {
+    return new Promise((resolve, reject) => {
+        db.query(sql, values, (error, rows) => {
+            if (error) return reject(error);
+            resolve(rows);
+        });
+    });
+}
+
+function requireAdmin(req, res, next) {
+    res.set('Cache-Control', 'no-store');
+    const authorization = req.get('Authorization') || '';
+    const match = authorization.match(/^Bearer ([a-f0-9]{64})$/i);
+    const token = match ? match[1] : '';
+    const session = adminSessions.get(token);
+
+    if (!session || session.expiresAt <= Date.now()) {
+        if (token) adminSessions.delete(token);
+        return res.status(401).json({ error: 'Admin login required or session expired.' });
+    }
+
+    req.adminToken = token;
+    req.adminUsername = session.username;
+    return next();
+}
+
+function inspectionWhereClause(dateRange, partNumber) {
+    const clauses = ['occurred_at_utc >= ?', 'occurred_at_utc < ?'];
+    const values = [dateRange.startUtc, dateRange.endExclusiveUtc];
+    if (partNumber) {
+        clauses.push('part_number = ?');
+        values.push(partNumber);
+    }
+    return { sql: clauses.join(' AND '), values };
+}
 
 // Startup check (doesn't crash if DB is down; pool will retry on next query)
 db.getConnection((err, connection) => {
@@ -59,7 +101,7 @@ app.post('/login', async (req, res) => {
             logger.log(`Successful login for user: ${username}`);
             return res.status(200).json({ message: 'Login successful' });
         } else {
-            logger.warn(`Failed login attempt for user: ${username}`);
+            logger.info(`Failed login attempt for user: ${username}`);
             return res.status(401).json({ error: 'Invalid username or password.' });
         }
     });
@@ -71,6 +113,52 @@ app.post('/login', async (req, res) => {
 // ------------------------------------------------------------------
 // New production API. The existing printing-era endpoints below remain
 // available during migration; this client uses the endpoints in this block.
+// The management dashboard is hosted by this API process. Its HTML is public,
+// but its data APIs require a short-lived bearer token from /admin/api/login.
+app.get(['/admin', '/admin/'], (_req, res) => {
+    res.sendFile(path.join(__dirname, 'admin_dashboard.html'));
+});
+
+app.get('/admin/dashboard.js', (_req, res) => {
+    res.sendFile(path.join(__dirname, 'admin_dashboard.js'));
+});
+
+app.post('/admin/api/login', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required.' });
+    }
+
+    const sql = 'SELECT 1 FROM user_log_in WHERE username = ? AND password = ? LIMIT 1';
+    db.query(sql, [username, password], (error, rows) => {
+        if (error) {
+            logger.error('Database query error during admin login:', error);
+            return res.status(500).json({ error: 'Could not verify management login.' });
+        }
+        if (rows.length !== 1) {
+            logger.info(`Failed management login attempt for user: ${username}`);
+            return res.status(401).json({ error: 'Invalid username or password.' });
+        }
+
+        const now = Date.now();
+        for (const [existingToken, session] of adminSessions) {
+            if (session.expiresAt <= now) adminSessions.delete(existingToken);
+        }
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiresAt = now + ADMIN_SESSION_TTL_MS;
+        adminSessions.set(token, { username, expiresAt });
+        logger.info(`Management dashboard login for user: ${username}`);
+        return res.status(200).json({ token, username, expiresAt: new Date(expiresAt).toISOString() });
+    });
+});
+
+app.post('/admin/api/logout', requireAdmin, (req, res) => {
+    adminSessions.delete(req.adminToken);
+    res.status(200).json({ message: 'Logged out.' });
+});
+
 const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EVENT_ID_PATTERN = RUN_ID_PATTERN;
 
@@ -380,6 +468,101 @@ app.post('/update-box-id', async (req, res) => {
 
         res.status(200).json({ message: `Successfully updated Box_ID for Spec: ${trimmedSpec} to ${newBoxId}`, rowsAffected: result.affectedRows });
     });
+});
+
+// Read-only management view of the new tray inspection tables.
+app.get('/admin/api/dashboard', requireAdmin, async (req, res) => {
+    const from = typeof req.query.from === 'string' ? req.query.from : '';
+    const to = typeof req.query.to === 'string' ? req.query.to : '';
+    const partNumber = typeof req.query.partNumber === 'string' ? req.query.partNumber.trim() : '';
+    if (partNumber.length > 100) {
+        return res.status(400).json({ error: 'Part number filter must be 100 characters or fewer.' });
+    }
+
+    let dateRange;
+    try {
+        dateRange = buildMalaysiaDateRange(from, to);
+    } catch (error) {
+        return res.status(400).json({ error: error.message });
+    }
+
+    const filter = inspectionWhereClause(dateRange, partNumber);
+    const where = `WHERE ${filter.sql}`;
+    const values = filter.values;
+
+    try {
+        const [summaryRows, dailyRows, partRows, machineRows, runRows, recentRows, registeredParts] = await Promise.all([
+            queryRows(`
+                SELECT COUNT(*) AS totalCount,
+                    COALESCE(SUM(status = 'OK'), 0) AS okCount,
+                    COALESCE(SUM(status = 'NG'), 0) AS ngCount,
+                    COUNT(DISTINCT run_id) AS runCount
+                FROM inspection_results ${where}`, values),
+            queryRows(`
+                SELECT DATE_FORMAT(DATE_ADD(occurred_at_utc, INTERVAL 8 HOUR), '%Y-%m-%d') AS productionDate,
+                    COUNT(*) AS totalCount,
+                    COALESCE(SUM(status = 'OK'), 0) AS okCount,
+                    COALESCE(SUM(status = 'NG'), 0) AS ngCount
+                FROM inspection_results ${where}
+                GROUP BY productionDate ORDER BY productionDate`, values),
+            queryRows(`
+                SELECT part_number AS partNumber, COUNT(*) AS totalCount,
+                    COALESCE(SUM(status = 'OK'), 0) AS okCount,
+                    COALESCE(SUM(status = 'NG'), 0) AS ngCount,
+                    COUNT(DISTINCT run_id) AS runCount
+                FROM inspection_results ${where}
+                GROUP BY part_number ORDER BY totalCount DESC LIMIT 50`, values),
+            queryRows(`
+                SELECT machine_id AS machineId, COUNT(*) AS totalCount,
+                    COALESCE(SUM(status = 'OK'), 0) AS okCount,
+                    COALESCE(SUM(status = 'NG'), 0) AS ngCount,
+                    COUNT(DISTINCT run_id) AS runCount
+                FROM inspection_results ${where}
+                GROUP BY machine_id ORDER BY totalCount DESC LIMIT 50`, values),
+            queryRows(`
+                SELECT run_id AS runId, part_number AS partNumber,
+                    machine_id AS machineId, operator_name AS operatorName,
+                    DATE_FORMAT(MIN(occurred_at_utc), '%Y-%m-%dT%H:%i:%sZ') AS startedAtUtc,
+                    DATE_FORMAT(MAX(occurred_at_utc), '%Y-%m-%dT%H:%i:%sZ') AS lastResultAtUtc,
+                    COUNT(*) AS totalCount,
+                    COALESCE(SUM(status = 'OK'), 0) AS okCount,
+                    COALESCE(SUM(status = 'NG'), 0) AS ngCount
+                FROM inspection_results ${where}
+                GROUP BY run_id, part_number, machine_id, operator_name
+                ORDER BY MAX(occurred_at_utc) DESC LIMIT 50`, values),
+            queryRows(`
+                SELECT id, part_number AS partNumber, status,
+                    machine_id AS machineId, operator_name AS operatorName,
+                    run_id AS runId,
+                    DATE_FORMAT(occurred_at_utc, '%Y-%m-%dT%H:%i:%sZ') AS occurredAtUtc
+                FROM inspection_results ${where}
+                ORDER BY occurred_at_utc DESC, id DESC LIMIT 100`, values),
+            queryRows('SELECT part_number AS partNumber FROM registered_parts ORDER BY part_number')
+        ]);
+
+        const summary = summaryRows[0] || {};
+        const totalCount = Number(summary.totalCount || 0);
+        const okCount = Number(summary.okCount || 0);
+        res.status(200).json({
+            filters: { from, to, partNumber },
+            summary: {
+                totalCount,
+                okCount,
+                ngCount: Number(summary.ngCount || 0),
+                runCount: Number(summary.runCount || 0),
+                yieldPercent: totalCount ? Math.round((okCount / totalCount) * 1000) / 10 : 0
+            },
+            daily: dailyRows,
+            byPart: partRows,
+            byMachine: machineRows,
+            runs: runRows,
+            recentResults: recentRows,
+            parts: registeredParts
+        });
+    } catch (error) {
+        logger.error('Database error loading admin dashboard:', error);
+        res.status(500).json({ error: 'Could not load tray packing dashboard data.' });
+    }
 });
 
 // ------------------------------------------------------------------
